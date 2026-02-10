@@ -5,7 +5,7 @@ export function PublicOnlyRoute() {
   const { user, isLoading } = useAuth();
 
   if (isLoading) {
-    return <div className="status-box">Loading session...</div>;
+    return <div className="status-box">Φόρτωση συνεδρίας...</div>;
   }
 
   if (user) {

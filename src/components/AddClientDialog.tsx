@@ -1,4 +1,5 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { lockBodyScroll, unlockBodyScroll } from "../lib/overlay";
 
 type AddClientDialogProps = {
   onAddClient: (input: { fullName: string; phone: string | null }) => Promise<void>;
@@ -25,12 +26,32 @@ export function AddClientDialog({ onAddClient }: AddClientDialogProps) {
     reset();
   };
 
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    lockBodyScroll();
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !isSubmitting) {
+        handleClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+      unlockBodyScroll();
+    };
+  }, [isOpen, isSubmitting]);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmedName = fullName.trim();
 
     if (!trimmedName) {
-      setErrorMessage("Full name is required.");
+      setErrorMessage("Το ονοματεπώνυμο είναι υποχρεωτικό.");
       return;
     }
 
@@ -44,7 +65,7 @@ export function AddClientDialog({ onAddClient }: AddClientDialogProps) {
       setIsOpen(false);
       reset();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not add client.";
+      const message = error instanceof Error ? error.message : "Δεν ήταν δυνατή η προσθήκη πελάτη.";
       setErrorMessage(message);
     } finally {
       setIsSubmitting(false);
@@ -54,16 +75,22 @@ export function AddClientDialog({ onAddClient }: AddClientDialogProps) {
   return (
     <>
       <button type="button" className="button button-primary" onClick={() => setIsOpen(true)}>
-        Add client
+        Προσθήκη πελάτη
       </button>
 
       {isOpen ? (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal">
-            <h3>Add client</h3>
+        <div className="modal-backdrop" role="presentation" onClick={handleClose}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Προσθήκη πελάτη"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3>Προσθήκη πελάτη</h3>
             <form className="stack-sm" onSubmit={handleSubmit}>
               <label className="field-label">
-                <span>Full name</span>
+                <span>Ονοματεπώνυμο</span>
                 <input
                   className="input"
                   type="text"
@@ -73,7 +100,7 @@ export function AddClientDialog({ onAddClient }: AddClientDialogProps) {
                 />
               </label>
               <label className="field-label">
-                <span>Phone (optional)</span>
+                <span>Τηλέφωνο (προαιρετικό)</span>
                 <input
                   className="input"
                   type="text"
@@ -84,10 +111,10 @@ export function AddClientDialog({ onAddClient }: AddClientDialogProps) {
               {errorMessage ? <p className="text-error">{errorMessage}</p> : null}
               <div className="row gap-sm align-end">
                 <button type="button" className="button" onClick={handleClose} disabled={isSubmitting}>
-                  Cancel
+                  Ακύρωση
                 </button>
                 <button type="submit" className="button button-primary" disabled={isSubmitting}>
-                  {isSubmitting ? "Saving..." : "Save client"}
+                  {isSubmitting ? "Αποθήκευση..." : "Αποθήκευση πελάτη"}
                 </button>
               </div>
             </form>

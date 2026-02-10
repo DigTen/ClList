@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { Client, Payment } from "../types/database";
 
 export type PaymentDraft = {
@@ -13,9 +13,11 @@ export type PaymentGridRow = {
   payment?: Payment;
 };
 
+export type SaveStatus = "saving" | "saved" | "error";
+
 type PaymentsGridProps = {
   rows: PaymentGridRow[];
-  savingByClientId: Record<string, boolean>;
+  saveStatusByClientId: Record<string, SaveStatus>;
   onSave: (clientId: string, draft: PaymentDraft) => Promise<void>;
 };
 
@@ -32,7 +34,54 @@ function draftsEqual(a: PaymentDraft, b: PaymentDraft): boolean {
   return a.lessons === b.lessons && a.price === b.price && a.paid === b.paid && a.notes === b.notes;
 }
 
-export function PaymentsGrid({ rows, savingByClientId, onSave }: PaymentsGridProps) {
+function focusNextGridControl(current: HTMLElement) {
+  const controls = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      ".payments-grid input, .payments-grid textarea, .payments-grid select, .payments-grid button",
+    ),
+  ).filter((element) => {
+    if ((element as HTMLInputElement).type === "hidden") {
+      return false;
+    }
+    if ((element as HTMLInputElement).disabled) {
+      return false;
+    }
+    return true;
+  });
+
+  const currentIndex = controls.indexOf(current);
+  if (currentIndex < 0) {
+    return;
+  }
+
+  const nextControl = controls[currentIndex + 1];
+  if (nextControl) {
+    nextControl.focus();
+  }
+}
+
+function handleEnterAdvance(event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
+  if (event.key !== "Enter" || event.shiftKey) {
+    return;
+  }
+
+  event.preventDefault();
+  const current = event.currentTarget;
+  current.blur();
+  focusNextGridControl(current);
+}
+
+function getSaveStatusLabel(status: SaveStatus): string {
+  if (status === "saving") {
+    return "Αποθηκεύεται...";
+  }
+  if (status === "error") {
+    return "Σφάλμα αποθήκευσης";
+  }
+  return "Αποθηκεύτηκε";
+}
+
+export function PaymentsGrid({ rows, saveStatusByClientId, onSave }: PaymentsGridProps) {
   const [drafts, setDrafts] = useState<Record<string, PaymentDraft>>({});
   const draftsRef = useRef<Record<string, PaymentDraft>>({});
 
@@ -70,31 +119,35 @@ export function PaymentsGrid({ rows, savingByClientId, onSave }: PaymentsGridPro
     if (draftsEqual(original, draft)) {
       return;
     }
-    await onSave(clientId, draft);
+    try {
+      await onSave(clientId, draft);
+    } catch {
+      // Save errors are surfaced by status state and toast handlers.
+    }
   };
 
   if (rows.length === 0) {
-    return <p className="empty-state">No active clients yet. Add your first client to start tracking payments.</p>;
+    return <p className="empty-state">Δεν βρέθηκαν πελάτες για τα τρέχοντα φίλτρα.</p>;
   }
 
   return (
-    <div className="table-wrap">
-      <table className="table">
+    <div className="table-wrap payments-grid">
+      <table className="table table-sticky">
         <thead>
           <tr>
-            <th>Client</th>
-            <th>Lessons</th>
-            <th>Price</th>
-            <th>Paid</th>
-            <th>Notes</th>
-            <th>Status</th>
+            <th>Πελάτης</th>
+            <th>Μαθήματα</th>
+            <th>Τιμή</th>
+            <th>Πληρωμένο</th>
+            <th>Σημειώσεις</th>
+            <th>Κατάσταση</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => {
             const clientId = row.client.id;
             const draft = drafts[clientId] ?? paymentToDraft(row.payment);
-            const isSaving = savingByClientId[clientId] ?? false;
+            const saveStatus = saveStatusByClientId[clientId] ?? "saved";
 
             return (
               <tr key={clientId}>
@@ -106,13 +159,13 @@ export function PaymentsGrid({ rows, savingByClientId, onSave }: PaymentsGridPro
                     min={0}
                     step={1}
                     value={draft.lessons}
+                    aria-label={`Μαθήματα για ${row.client.full_name}`}
+                    onKeyDown={handleEnterAdvance}
                     onChange={(event) => {
                       const value = event.target.value;
                       updateDraft(clientId, (previous) => ({ ...previous, lessons: value }));
                     }}
-                    onBlur={() =>
-                      void saveIfChanged(clientId, draftsRef.current[clientId] ?? draft)
-                    }
+                    onBlur={() => void saveIfChanged(clientId, draftsRef.current[clientId] ?? draft)}
                   />
                 </td>
                 <td>
@@ -122,19 +175,26 @@ export function PaymentsGrid({ rows, savingByClientId, onSave }: PaymentsGridPro
                     min={0}
                     step="0.01"
                     value={draft.price}
+                    aria-label={`Τιμή για ${row.client.full_name}`}
+                    onKeyDown={handleEnterAdvance}
                     onChange={(event) => {
                       const value = event.target.value;
                       updateDraft(clientId, (previous) => ({ ...previous, price: value }));
                     }}
-                    onBlur={() =>
-                      void saveIfChanged(clientId, draftsRef.current[clientId] ?? draft)
-                    }
+                    onBlur={() => void saveIfChanged(clientId, draftsRef.current[clientId] ?? draft)}
                   />
                 </td>
                 <td>
                   <input
                     type="checkbox"
                     checked={draft.paid}
+                    aria-label={`Πληρωμένο για ${row.client.full_name}`}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        focusNextGridControl(event.currentTarget);
+                      }
+                    }}
                     onChange={(event) => {
                       const nextDraft = { ...draft, paid: event.target.checked };
                       setDrafts((previous) => {
@@ -151,16 +211,18 @@ export function PaymentsGrid({ rows, savingByClientId, onSave }: PaymentsGridPro
                     className="input table-input"
                     rows={2}
                     value={draft.notes}
+                    aria-label={`Σημειώσεις για ${row.client.full_name}`}
+                    onKeyDown={handleEnterAdvance}
                     onChange={(event) => {
                       const value = event.target.value;
                       updateDraft(clientId, (previous) => ({ ...previous, notes: value }));
                     }}
-                    onBlur={() =>
-                      void saveIfChanged(clientId, draftsRef.current[clientId] ?? draft)
-                    }
+                    onBlur={() => void saveIfChanged(clientId, draftsRef.current[clientId] ?? draft)}
                   />
                 </td>
-                <td>{isSaving ? "Saving..." : "Saved"}</td>
+                <td className={saveStatus === "error" ? "status-cell-error" : undefined}>
+                  {getSaveStatusLabel(saveStatus)}
+                </td>
               </tr>
             );
           })}

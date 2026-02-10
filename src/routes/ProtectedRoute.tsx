@@ -6,7 +6,7 @@ export function ProtectedRoute() {
   const location = useLocation();
 
   if (isLoading) {
-    return <div className="status-box">Loading session...</div>;
+    return <div className="status-box">Φόρτωση συνεδρίας...</div>;
   }
 
   if (!user) {

@@ -6,7 +6,7 @@ type MonthPickerProps = {
   onChange: (date: Date) => void;
 };
 
-export function MonthPicker({ label = "Month", value, onChange }: MonthPickerProps) {
+export function MonthPicker({ label = "Μήνας", value, onChange }: MonthPickerProps) {
   return (
     <label className="field-label">
       <span>{label}</span>

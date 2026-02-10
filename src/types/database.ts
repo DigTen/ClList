@@ -19,6 +19,22 @@ export type Payment = {
   created_at: string;
 };
 
+export type AttendanceStatus = "attended" | "canceled" | "no_show";
+export type AttendanceBedType = "reformer" | "cadillac";
+
+export type Attendance = {
+  id: string;
+  user_id: string;
+  client_id: string;
+  session_date: string;
+  time_start: string | null;
+  duration_minutes: number | null;
+  bed_type: AttendanceBedType;
+  status: AttendanceStatus;
+  notes: string | null;
+  created_at: string;
+};
+
 export type ClientInsert = {
   full_name: string;
   phone: string | null;
@@ -33,5 +49,26 @@ export type PaymentUpsertInput = {
   paid: boolean;
   notes: string | null;
   user_id: string;
+};
+
+export type AttendanceInsert = {
+  user_id: string;
+  client_id: string;
+  session_date: string;
+  time_start: string;
+  duration_minutes: number | null;
+  bed_type: AttendanceBedType;
+  status: AttendanceStatus;
+  notes: string | null;
+};
+
+export type AttendanceUpdate = {
+  client_id: string;
+  session_date: string;
+  time_start: string;
+  duration_minutes: number | null;
+  bed_type: AttendanceBedType;
+  status: AttendanceStatus;
+  notes: string | null;
 };
 

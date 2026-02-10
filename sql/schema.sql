@@ -8,7 +8,8 @@ create table if not exists public.clients (
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  unique (user_id, full_name)
+  unique (user_id, full_name),
+  unique (id, user_id)
 );
 
 create table if not exists public.payments (
@@ -21,6 +22,10 @@ create table if not exists public.payments (
   notes text,
   user_id uuid not null references auth.users(id) on delete cascade,
   created_at timestamptz not null default now(),
+  constraint payments_client_owner_fkey
+    foreign key (client_id, user_id)
+    references public.clients(id, user_id)
+    on delete cascade,
   unique (user_id, client_id, month_start),
   constraint payments_lessons_non_negative check (lessons is null or lessons >= 0),
   constraint payments_price_non_negative check (price is null or price >= 0),
@@ -29,12 +34,129 @@ create table if not exists public.payments (
   )
 );
 
+create table if not exists public.attendance (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  client_id uuid not null references public.clients(id) on delete cascade,
+  session_date date not null,
+  time_start time not null,
+  duration_minutes integer,
+  bed_type text not null default 'reformer',
+  status text not null default 'attended',
+  notes text,
+  created_at timestamptz not null default now(),
+  constraint attendance_client_owner_fkey
+    foreign key (client_id, user_id)
+    references public.clients(id, user_id)
+    on delete cascade,
+  constraint attendance_bed_type_valid check (bed_type in ('reformer', 'cadillac')),
+  constraint attendance_status_valid check (status in ('attended', 'canceled', 'no_show')),
+  constraint attendance_time_required check (time_start is not null),
+  constraint attendance_duration_non_negative check (duration_minutes is null or duration_minutes >= 0),
+  unique (user_id, client_id, session_date, time_start)
+);
+
 create index if not exists idx_clients_user_active on public.clients (user_id, is_active, full_name);
 create index if not exists idx_payments_user_month on public.payments (user_id, month_start);
 create index if not exists idx_payments_client on public.payments (client_id);
+create index if not exists idx_attendance_user_date on public.attendance (user_id, session_date);
+create index if not exists idx_attendance_client on public.attendance (client_id);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'clients_id_user_id_key'
+  ) then
+    alter table public.clients
+      add constraint clients_id_user_id_key unique (id, user_id);
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'payments_client_owner_fkey'
+  ) then
+    alter table public.payments
+      add constraint payments_client_owner_fkey
+      foreign key (client_id, user_id)
+      references public.clients(id, user_id)
+      on delete cascade
+      not valid;
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'attendance_client_owner_fkey'
+  ) then
+    alter table public.attendance
+      add constraint attendance_client_owner_fkey
+      foreign key (client_id, user_id)
+      references public.clients(id, user_id)
+      on delete cascade
+      not valid;
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'attendance'
+      and column_name = 'bed_type'
+  ) then
+    alter table public.attendance
+      add column bed_type text not null default 'reformer';
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'attendance_bed_type_valid'
+  ) then
+    alter table public.attendance
+      add constraint attendance_bed_type_valid
+      check (bed_type in ('reformer', 'cadillac'))
+      not valid;
+  end if;
+end
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'attendance_time_required'
+  ) then
+    alter table public.attendance
+      add constraint attendance_time_required
+      check (time_start is not null)
+      not valid;
+  end if;
+end
+$$;
 
 alter table public.clients enable row level security;
 alter table public.payments enable row level security;
+alter table public.attendance enable row level security;
 
 drop policy if exists clients_select_own on public.clients;
 create policy clients_select_own
@@ -83,6 +205,31 @@ create policy payments_update_own
 drop policy if exists payments_delete_own on public.payments;
 create policy payments_delete_own
   on public.payments
+  for delete
+  using (auth.uid() = user_id);
+
+drop policy if exists attendance_select_own on public.attendance;
+create policy attendance_select_own
+  on public.attendance
+  for select
+  using (auth.uid() = user_id);
+
+drop policy if exists attendance_insert_own on public.attendance;
+create policy attendance_insert_own
+  on public.attendance
+  for insert
+  with check (auth.uid() = user_id);
+
+drop policy if exists attendance_update_own on public.attendance;
+create policy attendance_update_own
+  on public.attendance
+  for update
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+drop policy if exists attendance_delete_own on public.attendance;
+create policy attendance_delete_own
+  on public.attendance
   for delete
   using (auth.uid() = user_id);
 

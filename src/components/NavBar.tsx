@@ -14,7 +14,7 @@ export function NavBar() {
       await signOut();
       navigate("/login", { replace: true });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not sign out.";
+      const message = error instanceof Error ? error.message : "Δεν ήταν δυνατή η αποσύνδεση.";
       toast.error(message);
     } finally {
       setIsSigningOut(false);
@@ -25,19 +25,25 @@ export function NavBar() {
     <header className="top-nav">
       <div className="container row space-between align-center">
         <div className="row gap-md align-center">
-          <h1 className="app-title">Pilates Payments</h1>
+          <h1 className="app-title">Πληρωμές Pilates</h1>
           <nav className="row gap-sm">
             <NavLink
               to="/payments"
               className={({ isActive }) => (isActive ? "nav-link nav-link-active" : "nav-link")}
             >
-              Payments
+              Πληρωμές
+            </NavLink>
+            <NavLink
+              to="/calendar"
+              className={({ isActive }) => (isActive ? "nav-link nav-link-active" : "nav-link")}
+            >
+              Ημερολόγιο
             </NavLink>
             <NavLink
               to="/summary"
               className={({ isActive }) => (isActive ? "nav-link nav-link-active" : "nav-link")}
             >
-              Summary
+              Σύνοψη
             </NavLink>
           </nav>
         </div>
@@ -49,7 +55,7 @@ export function NavBar() {
             onClick={() => void handleSignOut()}
             disabled={isSigningOut}
           >
-            {isSigningOut ? "Signing out..." : "Sign out"}
+            {isSigningOut ? "Αποσύνδεση..." : "Αποσύνδεση"}
           </button>
         </div>
       </div>

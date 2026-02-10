@@ -29,16 +29,16 @@ export function SignupPage() {
       return;
     }
 
-    toast.success("Check your email to confirm your account.");
+    toast.success("Έλεγξε το email σου για επιβεβαίωση λογαριασμού.");
     navigate("/login", { replace: true });
   };
 
   return (
     <div className="auth-page">
       <form className="card stack-sm" onSubmit={handleSubmit}>
-        <h2>Create account</h2>
+        <h2>Δημιουργία λογαριασμού</h2>
         <label className="field-label">
-          <span>Email</span>
+          <span>Ηλεκτρονικό ταχυδρομείο</span>
           <input
             className="input"
             type="email"
@@ -48,7 +48,7 @@ export function SignupPage() {
           />
         </label>
         <label className="field-label">
-          <span>Password</span>
+          <span>Κωδικός</span>
           <input
             className="input"
             type="password"
@@ -59,10 +59,10 @@ export function SignupPage() {
           />
         </label>
         <button type="submit" className="button button-primary" disabled={isSubmitting}>
-          {isSubmitting ? "Creating..." : "Create account"}
+          {isSubmitting ? "Δημιουργία..." : "Δημιουργία λογαριασμού"}
         </button>
         <p className="muted-text">
-          Already have an account? <Link to="/login">Sign in</Link>
+          Έχεις ήδη λογαριασμό; <Link to="/login">Σύνδεση</Link>
         </p>
       </form>
     </div>

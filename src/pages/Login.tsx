@@ -30,9 +30,9 @@ export function LoginPage() {
   return (
     <div className="auth-page">
       <form className="card stack-sm" onSubmit={handleSubmit}>
-        <h2>Sign in</h2>
+        <h2>Σύνδεση</h2>
         <label className="field-label">
-          <span>Email</span>
+          <span>Ηλεκτρονικό ταχυδρομείο</span>
           <input
             className="input"
             type="email"
@@ -42,7 +42,7 @@ export function LoginPage() {
           />
         </label>
         <label className="field-label">
-          <span>Password</span>
+          <span>Κωδικός</span>
           <input
             className="input"
             type="password"
@@ -52,10 +52,10 @@ export function LoginPage() {
           />
         </label>
         <button type="submit" className="button button-primary" disabled={isSubmitting}>
-          {isSubmitting ? "Signing in..." : "Sign in"}
+          {isSubmitting ? "Σύνδεση..." : "Σύνδεση"}
         </button>
         <p className="muted-text">
-          No account? <Link to="/signup">Create one</Link>
+          Δεν έχεις λογαριασμό; <Link to="/signup">Δημιούργησε</Link>
         </p>
       </form>
     </div>

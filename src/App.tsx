@@ -6,6 +6,7 @@ import { LoginPage } from "./pages/Login";
 import { SignupPage } from "./pages/Signup";
 import { PaymentsPage } from "./pages/Payments";
 import { SummaryPage } from "./pages/Summary";
+import { CalendarPage } from "./pages/Calendar";
 import { NavBar } from "./components/NavBar";
 
 function AppShell() {
@@ -23,7 +24,7 @@ function RootRedirect() {
   const { user, isLoading } = useAuth();
 
   if (isLoading) {
-    return <div className="status-box">Loading...</div>;
+    return <div className="status-box">Φόρτωση...</div>;
   }
 
   return <Navigate to={user ? "/payments" : "/login"} replace />;
@@ -43,6 +44,7 @@ export default function App() {
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>
             <Route path="/payments" element={<PaymentsPage />} />
+            <Route path="/calendar" element={<CalendarPage />} />
             <Route path="/summary" element={<SummaryPage />} />
           </Route>
         </Route>
