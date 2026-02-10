@@ -19,4 +19,3 @@ export function MonthPicker({ label = "Μήνας", value, onChange }: MonthPick
     </label>
   );
 }
-

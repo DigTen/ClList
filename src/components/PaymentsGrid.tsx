@@ -1,4 +1,4 @@
-﻿import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { Client, Payment } from "../types/database";
 
 export type PaymentDraft = {
@@ -19,6 +19,7 @@ type PaymentsGridProps = {
   rows: PaymentGridRow[];
   saveStatusByClientId: Record<string, SaveStatus>;
   onSave: (clientId: string, draft: PaymentDraft) => Promise<void>;
+  emptyMessage?: string;
 };
 
 function paymentToDraft(payment?: Payment): PaymentDraft {
@@ -60,7 +61,7 @@ function focusNextGridControl(current: HTMLElement) {
   }
 }
 
-function handleEnterAdvance(event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) {
+function handleEnterAdvance(event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
   if (event.key !== "Enter" || event.shiftKey) {
     return;
   }
@@ -81,7 +82,26 @@ function getSaveStatusLabel(status: SaveStatus): string {
   return "Αποθηκεύτηκε";
 }
 
-export function PaymentsGrid({ rows, saveStatusByClientId, onSave }: PaymentsGridProps) {
+type PaymentStatus = "unpaid" | "paid" | "no_record";
+
+function getPaymentStatus(payment?: Payment): PaymentStatus {
+  if (!payment) {
+    return "no_record";
+  }
+  return payment.paid ? "paid" : "unpaid";
+}
+
+function getPaymentStatusLabel(status: PaymentStatus): string {
+  if (status === "paid") {
+    return "Πληρωμένο";
+  }
+  if (status === "unpaid") {
+    return "Απλήρωτο";
+  }
+  return "Χωρίς εγγραφή";
+}
+
+export function PaymentsGrid({ rows, saveStatusByClientId, onSave, emptyMessage }: PaymentsGridProps) {
   const [drafts, setDrafts] = useState<Record<string, PaymentDraft>>({});
   const draftsRef = useRef<Record<string, PaymentDraft>>({});
 
@@ -127,7 +147,7 @@ export function PaymentsGrid({ rows, saveStatusByClientId, onSave }: PaymentsGri
   };
 
   if (rows.length === 0) {
-    return <p className="empty-state">Δεν βρέθηκαν πελάτες για τα τρέχοντα φίλτρα.</p>;
+    return <p className="empty-state">{emptyMessage ?? "Δεν βρέθηκαν πελάτες για τα τρέχοντα φίλτρα."}</p>;
   }
 
   return (
@@ -140,6 +160,7 @@ export function PaymentsGrid({ rows, saveStatusByClientId, onSave }: PaymentsGri
             <th>Τιμή</th>
             <th>Πληρωμένο</th>
             <th>Σημειώσεις</th>
+            <th>Κατάσταση πληρωμής</th>
             <th>Κατάσταση</th>
           </tr>
         </thead>
@@ -148,9 +169,10 @@ export function PaymentsGrid({ rows, saveStatusByClientId, onSave }: PaymentsGri
             const clientId = row.client.id;
             const draft = drafts[clientId] ?? paymentToDraft(row.payment);
             const saveStatus = saveStatusByClientId[clientId] ?? "saved";
+            const paymentStatus = getPaymentStatus(row.payment);
 
             return (
-              <tr key={clientId}>
+              <tr key={clientId} className={paymentStatus === "unpaid" ? "payments-row-unpaid" : undefined}>
                 <td>{row.client.full_name}</td>
                 <td>
                   <input
@@ -160,6 +182,7 @@ export function PaymentsGrid({ rows, saveStatusByClientId, onSave }: PaymentsGri
                     step={1}
                     value={draft.lessons}
                     aria-label={`Μαθήματα για ${row.client.full_name}`}
+                    onWheel={(event) => event.currentTarget.blur()}
                     onKeyDown={handleEnterAdvance}
                     onChange={(event) => {
                       const value = event.target.value;
@@ -176,6 +199,7 @@ export function PaymentsGrid({ rows, saveStatusByClientId, onSave }: PaymentsGri
                     step="0.01"
                     value={draft.price}
                     aria-label={`Τιμή για ${row.client.full_name}`}
+                    onWheel={(event) => event.currentTarget.blur()}
                     onKeyDown={handleEnterAdvance}
                     onChange={(event) => {
                       const value = event.target.value;
@@ -185,18 +209,13 @@ export function PaymentsGrid({ rows, saveStatusByClientId, onSave }: PaymentsGri
                   />
                 </td>
                 <td>
-                  <input
-                    type="checkbox"
-                    checked={draft.paid}
+                  <select
+                    className="input table-input"
+                    value={draft.paid ? "paid" : "unpaid"}
                     aria-label={`Πληρωμένο για ${row.client.full_name}`}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        focusNextGridControl(event.currentTarget);
-                      }
-                    }}
+                    onKeyDown={handleEnterAdvance}
                     onChange={(event) => {
-                      const nextDraft = { ...draft, paid: event.target.checked };
+                      const nextDraft = { ...draft, paid: event.target.value === "paid" };
                       setDrafts((previous) => {
                         const next = { ...previous, [clientId]: nextDraft };
                         draftsRef.current = next;
@@ -204,7 +223,10 @@ export function PaymentsGrid({ rows, saveStatusByClientId, onSave }: PaymentsGri
                       });
                       void saveIfChanged(clientId, nextDraft);
                     }}
-                  />
+                  >
+                    <option value="unpaid">Όχι</option>
+                    <option value="paid">Ναι</option>
+                  </select>
                 </td>
                 <td>
                   <textarea
@@ -220,9 +242,12 @@ export function PaymentsGrid({ rows, saveStatusByClientId, onSave }: PaymentsGri
                     onBlur={() => void saveIfChanged(clientId, draftsRef.current[clientId] ?? draft)}
                   />
                 </td>
-                <td className={saveStatus === "error" ? "status-cell-error" : undefined}>
-                  {getSaveStatusLabel(saveStatus)}
+                <td>
+                  <span className={`payment-status-badge payment-status-${paymentStatus}`}>
+                    {getPaymentStatusLabel(paymentStatus)}
+                  </span>
                 </td>
+                <td className={saveStatus === "error" ? "status-cell-error" : undefined}>{getSaveStatusLabel(saveStatus)}</td>
               </tr>
             );
           })}

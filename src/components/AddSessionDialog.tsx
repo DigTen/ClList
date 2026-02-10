@@ -22,6 +22,7 @@ type AddSessionDialogProps = {
   clients: Client[];
   initialDate: Date;
   initialTime?: string;
+  initialBedType?: AttendanceBedType;
   initialSession?: Attendance | null;
   bedLoadByHour: BedLoadByHour;
 };
@@ -48,6 +49,7 @@ export function AddSessionDialog({
   clients,
   initialDate,
   initialTime,
+  initialBedType,
   initialSession,
   bedLoadByHour,
 }: AddSessionDialogProps) {
@@ -81,13 +83,13 @@ export function AddSessionDialog({
       setSessionDate(toIsoDate(initialDate));
       setTimeStart(initialTime ?? "08:00");
       setDurationMinutes("");
-      setBedType("reformer");
+      setBedType(initialBedType ?? "reformer");
       setStatus("attended");
       setNotes("");
     }
     setClientFilter("");
     setErrorMessage(null);
-  }, [initialDate, initialSession, initialTime, isOpen]);
+  }, [initialBedType, initialDate, initialSession, initialTime, isOpen]);
 
   useEffect(() => {
     if (!isOpen) {

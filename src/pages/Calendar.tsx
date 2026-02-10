@@ -22,7 +22,7 @@ import { MonthPicker } from "../components/MonthPicker";
 import { DayCell } from "../components/DayCell";
 import { SessionsDrawer } from "../components/SessionsDrawer";
 import { AddSessionDialog } from "../components/AddSessionDialog";
-import type { Attendance, AttendanceBedType, AttendanceInsert, Client } from "../types/database";
+import type { Attendance, AttendanceBedType, AttendanceInsert, AttendanceStatus, Client } from "../types/database";
 
 type SaveSessionPayload = {
   input: AttendanceInsert;
@@ -32,12 +32,24 @@ type SaveSessionPayload = {
 type CalendarViewMode = "month" | "week" | "day";
 type BedLoadByHour = Record<string, Record<AttendanceBedType, number>>;
 type SlotSessionsByBed = Record<AttendanceBedType, Attendance[]>;
+type UtilizationBand = "low" | "medium" | "high" | "full" | "over";
 
 const WEEKDAY_LABELS = ["Δευ", "Τρι", "Τετ", "Πεμ", "Παρ", "Σαβ", "Κυρ"];
 const WEEK_HOUR_START = 8;
 const WEEK_HOUR_END = 22;
 const BED_CAPACITY = 4;
 const BED_TYPES: AttendanceBedType[] = ["reformer", "cadillac"];
+const STATUS_OPTIONS: AttendanceStatus[] = ["attended", "canceled", "no_show"];
+const STATUS_SHORT_LABEL: Record<AttendanceStatus, string> = {
+  attended: "Παρ.",
+  canceled: "Ακυρ.",
+  no_show: "Απουσ.",
+};
+const STATUS_LONG_LABEL: Record<AttendanceStatus, string> = {
+  attended: "Παρακολούθησε",
+  canceled: "Ακυρώθηκε",
+  no_show: "Δεν προσήλθε",
+};
 const WEEK_HOURS = Array.from(
   { length: WEEK_HOUR_END - WEEK_HOUR_START + 1 },
   (_, index) => WEEK_HOUR_START + index,
@@ -53,7 +65,19 @@ function formatTime(timeStart: string | null): string {
 }
 
 function sortSessionsByTime(sessions: Attendance[]): Attendance[] {
-  return [...sessions].sort((a, b) => (a.time_start ?? "").localeCompare(b.time_start ?? ""));
+  return [...sessions].sort((a, b) => {
+    const timeCompare = (a.time_start ?? "").localeCompare(b.time_start ?? "");
+    if (timeCompare !== 0) {
+      return timeCompare;
+    }
+
+    const createdAtCompare = (a.created_at ?? "").localeCompare(b.created_at ?? "");
+    if (createdAtCompare !== 0) {
+      return createdAtCompare;
+    }
+
+    return a.id.localeCompare(b.id);
+  });
 }
 
 function formatHourLabel(hour: number): string {
@@ -80,6 +104,22 @@ function getBedLoadState(count: number): "normal" | "full" | "overbooked" {
     return "full";
   }
   return "normal";
+}
+
+function getUtilizationBand(ratio: number): UtilizationBand {
+  if (ratio > 1) {
+    return "over";
+  }
+  if (ratio >= 0.75) {
+    return "full";
+  }
+  if (ratio >= 0.5) {
+    return "high";
+  }
+  if (ratio >= 0.25) {
+    return "medium";
+  }
+  return "low";
 }
 
 function buildEmptyBedLoadByHour(): BedLoadByHour {
@@ -109,6 +149,7 @@ export function CalendarPage() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [dialogInitialTime, setDialogInitialTime] = useState<string | undefined>(undefined);
+  const [dialogInitialBedType, setDialogInitialBedType] = useState<AttendanceBedType | undefined>(undefined);
   const [editingSession, setEditingSession] = useState<Attendance | null>(null);
 
   const monthStartDate = startOfMonth(selectedMonth);
@@ -162,6 +203,7 @@ export function CalendarPage() {
     [monthGridStart],
   );
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(weekStartDate, index)), [weekStartDate]);
+
   const weekSlotSessionsByBed = useMemo(() => {
     const map = new Map<string, SlotSessionsByBed>();
     if (viewMode !== "week") {
@@ -192,6 +234,7 @@ export function CalendarPage() {
     }
     return sortSessionsByTime((attendanceQuery.data ?? []).filter((session) => !session.time_start));
   }, [attendanceQuery.data, viewMode]);
+
   const periodLabel = useMemo(() => {
     if (viewMode === "month") {
       return monthStartDate.toLocaleDateString("el-GR", { month: "long", year: "numeric" });
@@ -228,6 +271,98 @@ export function CalendarPage() {
       { total: 0, attended: 0, canceled: 0, noShow: 0 },
     );
   }, [attendanceQuery.data]);
+
+  const selectedDateKey = drawerDate ? toIsoDate(drawerDate) : null;
+  const sessionsForSelectedDay = selectedDateKey ? sortSessionsByTime(sessionsByDate.get(selectedDateKey) ?? []) : [];
+
+  const sessionsForFocusDay = useMemo(() => {
+    const focusDateKey = toIsoDate(dayStartDate);
+    return sortSessionsByTime(sessionsByDate.get(focusDateKey) ?? []);
+  }, [dayStartDate, sessionsByDate]);
+
+  const daySlotSessionsByBed = useMemo(() => {
+    const map = new Map<number, SlotSessionsByBed>();
+    sessionsForFocusDay.forEach((session) => {
+      const hour = getHourFromTime(session.time_start);
+      if (hour == null || hour < WEEK_HOUR_START || hour > WEEK_HOUR_END) {
+        return;
+      }
+      const existing = map.get(hour) ?? buildEmptySlotBeds();
+      existing[session.bed_type].push(session);
+      map.set(hour, existing);
+    });
+    for (const [hour, value] of map.entries()) {
+      map.set(hour, {
+        reformer: sortSessionsByTime(value.reformer),
+        cadillac: sortSessionsByTime(value.cadillac),
+      });
+    }
+    return map;
+  }, [sessionsForFocusDay]);
+
+  const dayUnscheduledSessions = useMemo(() => {
+    return sessionsForFocusDay.filter((session) => {
+      const hour = getHourFromTime(session.time_start);
+      return hour == null || hour < WEEK_HOUR_START || hour > WEEK_HOUR_END;
+    });
+  }, [sessionsForFocusDay]);
+  const bedLoadByDateHour = useMemo(() => {
+    const map = new Map<string, BedLoadByHour>();
+    (attendanceQuery.data ?? []).forEach((session) => {
+      const hour = getHourFromTime(session.time_start);
+      if (hour == null || hour < WEEK_HOUR_START || hour > WEEK_HOUR_END) {
+        return;
+      }
+      const dateKey = session.session_date;
+      const hourLabel = formatHourLabel(hour);
+      const dateLoad = map.get(dateKey) ?? buildEmptyBedLoadByHour();
+      dateLoad[hourLabel][session.bed_type] += 1;
+      map.set(dateKey, dateLoad);
+    });
+    return map;
+  }, [attendanceQuery.data]);
+
+  const weekUtilizationByHour = useMemo(() => {
+    const capacityPerHour = weekDays.length * BED_TYPES.length * BED_CAPACITY;
+    return WEEK_HOURS.map((hour) => {
+      const hourLabel = formatHourLabel(hour);
+      const total = weekDays.reduce((sum, day) => {
+        const dateLoad = bedLoadByDateHour.get(toIsoDate(day));
+        if (!dateLoad) {
+          return sum;
+        }
+        return sum + dateLoad[hourLabel].reformer + dateLoad[hourLabel].cadillac;
+      }, 0);
+      const ratio = capacityPerHour > 0 ? total / capacityPerHour : 0;
+      return {
+        hour,
+        hourLabel,
+        total,
+        capacity: capacityPerHour,
+        ratio,
+        band: getUtilizationBand(ratio),
+      };
+    });
+  }, [bedLoadByDateHour, weekDays]);
+
+  const dayUtilizationByHour = useMemo(() => {
+    const capacityPerHour = BED_TYPES.length * BED_CAPACITY;
+    const dateKey = toIsoDate(dayStartDate);
+    const dateLoad = bedLoadByDateHour.get(dateKey) ?? buildEmptyBedLoadByHour();
+    return WEEK_HOURS.map((hour) => {
+      const hourLabel = formatHourLabel(hour);
+      const total = dateLoad[hourLabel].reformer + dateLoad[hourLabel].cadillac;
+      const ratio = capacityPerHour > 0 ? total / capacityPerHour : 0;
+      return {
+        hour,
+        hourLabel,
+        total,
+        capacity: capacityPerHour,
+        ratio,
+        band: getUtilizationBand(ratio),
+      };
+    });
+  }, [bedLoadByDateHour, dayStartDate]);
 
   const saveAttendanceMutation = useMutation({
     mutationFn: async ({ input, existingId }: SaveSessionPayload) => {
@@ -273,6 +408,8 @@ export function CalendarPage() {
         });
       });
       queryClient.invalidateQueries({ queryKey: ["attendance", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["follow-up-tasks", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] });
       toast.success("Η συνεδρία αποθηκεύτηκε.");
     },
     onError: (error) => {
@@ -288,10 +425,38 @@ export function CalendarPage() {
         current.filter((session) => session.id !== sessionId),
       );
       queryClient.invalidateQueries({ queryKey: ["attendance", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["follow-up-tasks", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] });
       toast.success("Η συνεδρία διαγράφηκε.");
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : "Δεν ήταν δυνατή η διαγραφή συνεδρίας.";
+      toast.error(message);
+    },
+  });
+
+  const quickStatusMutation = useMutation({
+    mutationFn: async ({ session, status }: { session: Attendance; status: AttendanceStatus }) => {
+      return updateAttendance(session.id, {
+        client_id: session.client_id,
+        session_date: session.session_date,
+        time_start: session.time_start ?? "08:00",
+        duration_minutes: session.duration_minutes,
+        bed_type: session.bed_type,
+        status,
+        notes: session.notes,
+      });
+    },
+    onSuccess: (savedSession) => {
+      queryClient.setQueryData<Attendance[]>(["attendance", user?.id, rangeStart, rangeEnd], (current = []) =>
+        current.map((session) => (session.id === savedSession.id ? savedSession : session)),
+      );
+      queryClient.invalidateQueries({ queryKey: ["attendance", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["follow-up-tasks", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["notifications", user?.id] });
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Δεν ήταν δυνατή η ενημέρωση κατάστασης.";
       toast.error(message);
     },
   });
@@ -310,44 +475,14 @@ export function CalendarPage() {
     setDrawerDate(null);
     setEditingSession(null);
     setDialogInitialTime(undefined);
+    setDialogInitialBedType(undefined);
     setIsDialogOpen(false);
   };
-
-  const selectedDateKey = drawerDate ? toIsoDate(drawerDate) : null;
-  const sessionsForSelectedDay = selectedDateKey ? sortSessionsByTime(sessionsByDate.get(selectedDateKey) ?? []) : [];
-  const sessionsForFocusDay = useMemo(() => {
-    const focusDateKey = toIsoDate(dayStartDate);
-    return sortSessionsByTime(sessionsByDate.get(focusDateKey) ?? []);
-  }, [dayStartDate, sessionsByDate]);
-  const daySlotSessionsByBed = useMemo(() => {
-    const map = new Map<number, SlotSessionsByBed>();
-    sessionsForFocusDay.forEach((session) => {
-      const hour = getHourFromTime(session.time_start);
-      if (hour == null || hour < WEEK_HOUR_START || hour > WEEK_HOUR_END) {
-        return;
-      }
-      const existing = map.get(hour) ?? buildEmptySlotBeds();
-      existing[session.bed_type].push(session);
-      map.set(hour, existing);
-    });
-    for (const [hour, value] of map.entries()) {
-      map.set(hour, {
-        reformer: sortSessionsByTime(value.reformer),
-        cadillac: sortSessionsByTime(value.cadillac),
-      });
-    }
-    return map;
-  }, [sessionsForFocusDay]);
-  const dayUnscheduledSessions = useMemo(() => {
-    return sessionsForFocusDay.filter((session) => {
-      const hour = getHourFromTime(session.time_start);
-      return hour == null || hour < WEEK_HOUR_START || hour > WEEK_HOUR_END;
-    });
-  }, [sessionsForFocusDay]);
 
   const handleAddSession = () => {
     setEditingSession(null);
     setDialogInitialTime(undefined);
+    setDialogInitialBedType(undefined);
     if (!drawerDate) {
       setDrawerDate(focusDate);
     }
@@ -357,6 +492,7 @@ export function CalendarPage() {
   const handleEditSession = (session: Attendance) => {
     setEditingSession(session);
     setDialogInitialTime(undefined);
+    setDialogInitialBedType(undefined);
     setIsDialogOpen(true);
   };
 
@@ -369,6 +505,13 @@ export function CalendarPage() {
 
   const handleSaveSession = async (input: AttendanceInsert, existingId?: string) => {
     await saveAttendanceMutation.mutateAsync({ input, existingId });
+  };
+
+  const handleQuickStatusChange = (session: Attendance, status: AttendanceStatus) => {
+    if (session.status === status) {
+      return;
+    }
+    void quickStatusMutation.mutateAsync({ session, status });
   };
 
   const handleChangeMonth = (nextMonth: Date) => {
@@ -400,10 +543,11 @@ export function CalendarPage() {
     setFocusDate(today);
   };
 
-  const openDialogForDay = (date: Date, initialTime?: string) => {
+  const openDialogForDay = (date: Date, initialTime?: string, initialBedType?: AttendanceBedType) => {
     setDrawerDate(date);
     setEditingSession(null);
     setDialogInitialTime(initialTime);
+    setDialogInitialBedType(initialBedType);
     setIsDialogOpen(true);
   };
 
@@ -425,6 +569,189 @@ export function CalendarPage() {
 
     return bedLoadByHour;
   }, [attendanceQuery.data, dialogDateIso]);
+  const showSuggestedMove = (dateIso: string, hour: number, currentBedType: AttendanceBedType) => {
+    const dateLoads = bedLoadByDateHour.get(dateIso);
+    if (!dateLoads) {
+      toast.info("Δεν υπάρχουν διαθέσιμα δεδομένα για πρόταση μετακίνησης.");
+      return;
+    }
+
+    const otherBedType: AttendanceBedType = currentBedType === "reformer" ? "cadillac" : "reformer";
+    const sameHourLabel = formatHourLabel(hour);
+    const sameHourOtherBedLoad = dateLoads[sameHourLabel][otherBedType];
+    if (sameHourOtherBedLoad < BED_CAPACITY) {
+      toast.info(
+        `Προτεινόμενη μετακίνηση: ${sameHourLabel} · ${formatBedType(otherBedType)} (${sameHourOtherBedLoad}/${BED_CAPACITY}).`,
+      );
+      return;
+    }
+
+    let bestCandidate: { hour: number; bedType: AttendanceBedType; load: number } | null = null;
+    for (const candidateHour of WEEK_HOURS) {
+      for (const bedType of BED_TYPES) {
+        const candidateLoad = dateLoads[formatHourLabel(candidateHour)][bedType];
+        if (candidateLoad >= BED_CAPACITY) {
+          continue;
+        }
+        if (
+          !bestCandidate ||
+          candidateLoad < bestCandidate.load ||
+          (candidateLoad === bestCandidate.load && Math.abs(candidateHour - hour) < Math.abs(bestCandidate.hour - hour))
+        ) {
+          bestCandidate = {
+            hour: candidateHour,
+            bedType,
+            load: candidateLoad,
+          };
+        }
+      }
+    }
+
+    if (!bestCandidate) {
+      toast.warning("Δεν βρέθηκε διαθέσιμο slot κάτω από 4/4 την ίδια ημέρα.");
+      return;
+    }
+
+    toast.info(
+      `Προτεινόμενη μετακίνηση: ${formatHourLabel(bestCandidate.hour)} · ${formatBedType(bestCandidate.bedType)} (${bestCandidate.load}/${BED_CAPACITY}).`,
+    );
+  };
+
+  const renderUtilizationStrip = (
+    rows: Array<{ hour: number; hourLabel: string; total: number; capacity: number; ratio: number; band: UtilizationBand }>,
+    keyPrefix: string,
+  ) => {
+    return (
+      <div className="utilization-strip">
+        {rows.map((item) => (
+          <div key={`${keyPrefix}-${item.hour}`} className="utilization-item">
+            <span className="utilization-hour">{item.hourLabel}</span>
+            <div className="utilization-track">
+              <span
+                className={`utilization-fill utilization-fill-${item.band}`}
+                style={{ width: `${Math.min(100, item.ratio * 100)}%` }}
+              />
+            </div>
+            <span className="utilization-count">
+              {item.total}/{item.capacity}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderBedLane = ({
+    bedType,
+    bedSessions,
+    dateIso,
+    hour,
+    onOpenLane,
+  }: {
+    bedType: AttendanceBedType;
+    bedSessions: Attendance[];
+    dateIso: string;
+    hour: number;
+    onOpenLane: () => void;
+  }) => {
+    const bedCount = bedSessions.length;
+    const bedState = getBedLoadState(bedCount);
+
+    return (
+      <section
+        key={`${bedType}-${dateIso}-${hour}`}
+        className={`week-bed-lane week-bed-lane-${bedType} week-bed-lane-${bedState}`}
+        role="button"
+        tabIndex={0}
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenLane();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            onOpenLane();
+          }
+        }}
+        aria-label={`${formatBedType(bedType)} ${bedCount} από ${BED_CAPACITY}`}
+      >
+        <header className="week-bed-lane-head">
+          <strong className="week-bed-label">{formatBedType(bedType)}</strong>
+          <div className="row gap-sm align-center">
+            <span
+              className={`week-bed-badge week-bed-badge-${bedType} week-bed-badge-${bedState}`}
+              aria-label={`Πληρότητα ${formatBedType(bedType)} ${bedCount} από ${BED_CAPACITY}`}
+            >
+              {bedCount}/{BED_CAPACITY}
+            </span>
+            {bedCount > BED_CAPACITY ? (
+              <button
+                type="button"
+                className="week-overbook-link"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  showSuggestedMove(dateIso, hour, bedType);
+                }}
+              >
+                Προτεινόμενη μετακίνηση
+              </button>
+            ) : null}
+          </div>
+        </header>
+
+        {bedSessions.length ? (
+          <div className="week-bed-chips">
+            {bedSessions.map((session) => {
+              const clientName = clientsById[session.client_id]?.full_name ?? "Άγνωστος πελάτης";
+              return (
+                <article
+                  key={session.id}
+                  className={`week-session-chip ${bedCount > BED_CAPACITY ? "week-session-chip-overbooked" : ""}`}
+                  aria-label={`${clientName}, ${formatTime(session.time_start)} · ${formatBedType(session.bed_type)} (${bedCount}/${BED_CAPACITY})`}
+                >
+                  <button
+                    type="button"
+                    className="week-session-main-action"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleEditSession(session);
+                    }}
+                  >
+                    <span className="week-session-title">{clientName}</span>
+                    <span className="week-session-meta">
+                      {formatTime(session.time_start)} · {formatBedType(session.bed_type)}
+                    </span>
+                  </button>
+                  <div className="week-session-actions" onClick={(event) => event.stopPropagation()}>
+                    {STATUS_OPTIONS.map((statusOption) => (
+                      <button
+                        key={`${session.id}-${statusOption}`}
+                        type="button"
+                        className={[
+                          "week-session-status-action",
+                          `week-session-status-${statusOption}`,
+                          session.status === statusOption ? "week-session-status-action-active" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        aria-label={`Κατάσταση: ${STATUS_LONG_LABEL[statusOption]}`}
+                        onClick={() => handleQuickStatusChange(session, statusOption)}
+                      >
+                        {STATUS_SHORT_LABEL[statusOption]}
+                      </button>
+                    ))}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <span className="week-bed-empty">-</span>
+        )}
+      </section>
+    );
+  };
 
   if (clientsQuery.isLoading || attendanceQuery.isLoading) {
     return <div className="status-box">Φόρτωση ημερολογίου...</div>;
@@ -484,8 +811,8 @@ export function CalendarPage() {
           <strong className="calendar-period-label">{periodLabel}</strong>
 
           <div className="calendar-legend">
-            <span className="status-pill status-attended">Παρακολ. {totals.attended}</span>
-            <span className="status-pill status-canceled">Ακυρ. {totals.canceled}</span>
+            <span className="status-pill status-attended">Παρ. {totals.attended}</span>
+            <span className="status-pill status-canceled">Ακύρ. {totals.canceled}</span>
             <span className="status-pill status-no-show">Απουσ. {totals.noShow}</span>
             <span className="status-pill">Σύνολο {totals.total}</span>
           </div>
@@ -503,17 +830,20 @@ export function CalendarPage() {
               Προσθήκη συνεδρίας
             </button>
           </div>
+
           {dayUnscheduledSessions.length ? (
             <div className="status-box status-error">
               Υπάρχουν συνεδρίες εκτός ωραρίου 08:00-22:00. Χρειάζεται επεξεργασία για να εμφανιστούν στο ωρολόγιο.
             </div>
           ) : null}
 
+          {renderUtilizationStrip(dayUtilizationByHour, "day")}
           <div className="day-schedule">
             {WEEK_HOURS.map((hour) => {
               const hourLabel = formatHourLabel(hour);
               const slotSessionsByBed = daySlotSessionsByBed.get(hour) ?? EMPTY_SLOT_BEDS;
               const slotTotal = slotSessionsByBed.reformer.length + slotSessionsByBed.cadillac.length;
+              const dateKey = toIsoDate(dayStartDate);
               const slotDateLabel = dayStartDate.toLocaleDateString("el-GR", {
                 weekday: "long",
                 day: "2-digit",
@@ -542,56 +872,15 @@ export function CalendarPage() {
                   >
                     <div className="week-slot-content">
                       <div className="week-bed-lanes">
-                        {BED_TYPES.map((bedType) => {
-                          const bedSessions = slotSessionsByBed[bedType];
-                          const bedCount = bedSessions.length;
-                          const bedState = getBedLoadState(bedCount);
-
-                          return (
-                            <section
-                              key={bedType}
-                              className={`week-bed-lane week-bed-lane-${bedState}`}
-                              aria-label={`${formatBedType(bedType)} ${bedCount} από ${BED_CAPACITY}`}
-                            >
-                              <header className="week-bed-lane-head">
-                                <strong className="week-bed-label">{formatBedType(bedType)}</strong>
-                                <span
-                                  className={`week-bed-badge week-bed-badge-${bedState}`}
-                                  aria-label={`Πληρότητα ${formatBedType(bedType)} ${bedCount} από ${BED_CAPACITY}`}
-                                >
-                                  {bedCount}/{BED_CAPACITY}
-                                </span>
-                              </header>
-
-                              {bedSessions.length ? (
-                                <div className="week-bed-chips">
-                                  {bedSessions.map((session) => {
-                                    const clientName = clientsById[session.client_id]?.full_name ?? "Άγνωστος πελάτης";
-                                    return (
-                                      <button
-                                        key={session.id}
-                                        type="button"
-                                        className={`week-session-chip ${bedCount > BED_CAPACITY ? "week-session-chip-overbooked" : ""}`}
-                                        aria-label={`Επεξεργασία συνεδρίας ${clientName}, ${formatTime(session.time_start)} · ${formatBedType(session.bed_type)} (${bedCount}/${BED_CAPACITY})`}
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          handleEditSession(session);
-                                        }}
-                                      >
-                                        <span className="week-session-title">{clientName}</span>
-                                        <span className="week-session-meta">
-                                          {formatTime(session.time_start)} · {formatBedType(session.bed_type)}
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              ) : (
-                                <span className="week-bed-empty">-</span>
-                              )}
-                            </section>
-                          );
-                        })}
+                        {BED_TYPES.map((bedType) =>
+                          renderBedLane({
+                            bedType,
+                            bedSessions: slotSessionsByBed[bedType],
+                            dateIso: dateKey,
+                            hour,
+                            onOpenLane: () => openDialogForDay(dayStartDate, hourLabel, bedType),
+                          }),
+                        )}
                       </div>
 
                       {slotTotal === 0 ? (
@@ -614,6 +903,8 @@ export function CalendarPage() {
               Υπάρχουν συνεδρίες χωρίς ώρα. Χρειάζεται επεξεργασία για να εμφανιστούν στο ωρολόγιο.
             </div>
           ) : null}
+
+          {renderUtilizationStrip(weekUtilizationByHour, "week")}
 
           <div className="week-schedule">
             <div className="week-schedule-header">
@@ -646,6 +937,7 @@ export function CalendarPage() {
                         day: "2-digit",
                         month: "2-digit",
                       });
+
                       return (
                         <div
                           key={`${dateKey}-${hour}`}
@@ -667,56 +959,15 @@ export function CalendarPage() {
                         >
                           <div className="week-slot-content">
                             <div className="week-bed-lanes">
-                              {BED_TYPES.map((bedType) => {
-                                const bedSessions = slotSessionsByBed[bedType];
-                                const bedCount = bedSessions.length;
-                                const bedState = getBedLoadState(bedCount);
-
-                                return (
-                                  <section
-                                    key={bedType}
-                                    className={`week-bed-lane week-bed-lane-${bedState}`}
-                                    aria-label={`${formatBedType(bedType)} ${bedCount} από ${BED_CAPACITY}`}
-                                  >
-                                    <header className="week-bed-lane-head">
-                                      <strong className="week-bed-label">{formatBedType(bedType)}</strong>
-                                      <span
-                                        className={`week-bed-badge week-bed-badge-${bedState}`}
-                                        aria-label={`Πληρότητα ${formatBedType(bedType)} ${bedCount} από ${BED_CAPACITY}`}
-                                      >
-                                        {bedCount}/{BED_CAPACITY}
-                                      </span>
-                                    </header>
-
-                                    {bedSessions.length ? (
-                                      <div className="week-bed-chips">
-                                        {bedSessions.map((session) => {
-                                          const clientName = clientsById[session.client_id]?.full_name ?? "Άγνωστος πελάτης";
-                                          return (
-                                            <button
-                                              key={session.id}
-                                              type="button"
-                                              className={`week-session-chip ${bedCount > BED_CAPACITY ? "week-session-chip-overbooked" : ""}`}
-                                              aria-label={`Επεξεργασία συνεδρίας ${clientName}, ${formatTime(session.time_start)} · ${formatBedType(session.bed_type)} (${bedCount}/${BED_CAPACITY})`}
-                                              onClick={(event) => {
-                                                event.stopPropagation();
-                                                handleEditSession(session);
-                                              }}
-                                            >
-                                              <span className="week-session-title">{clientName}</span>
-                                              <span className="week-session-meta">
-                                                {formatTime(session.time_start)} · {formatBedType(session.bed_type)}
-                                              </span>
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    ) : (
-                                      <span className="week-bed-empty">-</span>
-                                    )}
-                                  </section>
-                                );
-                              })}
+                              {BED_TYPES.map((bedType) =>
+                                renderBedLane({
+                                  bedType,
+                                  bedSessions: slotSessionsByBed[bedType],
+                                  dateIso: dateKey,
+                                  hour,
+                                  onOpenLane: () => openDialogForDay(date, hourLabel, bedType),
+                                }),
+                              )}
                             </div>
 
                             {slotTotal === 0 ? (
@@ -783,12 +1034,14 @@ export function CalendarPage() {
             setIsDialogOpen(false);
             setEditingSession(null);
             setDialogInitialTime(undefined);
+            setDialogInitialBedType(undefined);
           }}
           onSave={handleSaveSession}
           userId={user.id}
           clients={clientsQuery.data ?? []}
           initialDate={drawerDate ?? focusDate}
           initialTime={dialogInitialTime}
+          initialBedType={dialogInitialBedType}
           initialSession={editingSession}
           bedLoadByHour={dialogBedLoadByHour}
         />

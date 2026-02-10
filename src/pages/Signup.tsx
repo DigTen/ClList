@@ -25,7 +25,7 @@ export function SignupPage() {
     }
 
     if (data.session) {
-      navigate("/payments", { replace: true });
+      navigate("/calendar", { replace: true });
       return;
     }
 
@@ -68,4 +68,3 @@ export function SignupPage() {
     </div>
   );
 }
-
