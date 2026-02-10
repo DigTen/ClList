@@ -1,6 +1,6 @@
 # Pilates Payments SPA
 
-React + TypeScript + Vite single-page app for tracking monthly client payments and summary metrics.
+React + TypeScript + Vite single-page app for tracking clients, monthly payments, lesson attendance, and financial summary metrics.
 
 ## Stack
 
@@ -12,15 +12,23 @@ React + TypeScript + Vite single-page app for tracking monthly client payments a
 ## Features
 
 - Email/password sign up, sign in, sign out
-- Protected routes (`/#/payments`, `/#/summary`)
+- Protected routes (`/#/payments`, `/#/calendar`, `/#/summary`)
 - Clients list with `Add client` modal
 - Monthly payments grid:
   - active clients left-joined with that month payment rows
   - inline editable `lessons`, `price`, `paid`, `notes`
   - upsert on edit (`user_id + client_id + month_start`)
+- Calendar / attendance tracking:
+  - month, week, and day views
+  - hour-based scheduling (`08:00` to `22:00`)
+  - attendance status (`attended`, `canceled`, `no_show`)
+  - bed type support (`REFORMER`, `CADILLAC`)
+  - occupancy visibility per bed and hour (`x/4`) with visual overbook indication (no hard cap)
 - Summary page:
-  - lessons + paid status by client
-  - aggregate totals: lessons, revenue, paid/unpaid counts
+  - planned lessons from `payments.lessons`
+  - attended lessons from `attendance` rows with `status='attended'`
+  - pending lessons = `max(0, planned - attended)`
+  - aggregate totals: pending, attended, planned, paid/unpaid, revenue
 
 ## Project Structure
 
@@ -29,14 +37,20 @@ src/
   auth/AuthProvider.tsx
   components/
     AddClientDialog.tsx
+    AddSessionDialog.tsx
+    DayCell.tsx
     MonthPicker.tsx
     NavBar.tsx
     PaymentsGrid.tsx
+    SessionsDrawer.tsx
   lib/
     data.ts
     date.ts
+    format.ts
+    overlay.ts
     supabaseClient.ts
   pages/
+    Calendar.tsx
     Login.tsx
     Payments.tsx
     Signup.tsx
@@ -98,5 +112,13 @@ Workflow file: `.github/workflows/deploy-pages.yml`
 
 - Vite `base` is set to `./` in `vite.config.ts` to support repo-based GitHub Pages paths.
 - Routing uses `HashRouter` to avoid 404 on refresh/deep links in static hosting.
-- RLS restricts all `clients` and `payments` access to `auth.uid() = user_id`.
+- RLS restricts `clients`, `payments`, and `attendance` access to `auth.uid() = user_id`.
+
+## GitHub Actions Secrets (Required for CI Build)
+
+The Pages workflow builds the app in CI and needs Supabase env vars at build time.  
+Create these repository secrets in `Settings -> Secrets and variables -> Actions`:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
 
